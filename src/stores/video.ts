@@ -150,6 +150,9 @@ export const useVideoStore = defineStore('video', () => {
 
     activeStreams.value[streamName]!.timeRecordingStart = new Date()
     const streamData = activeStreams.value[streamName] as StreamData
+    // FIXME: To avoid two recordings started at the same second to create conflitcting chunks in the database,
+    // the fileName **must** be unique.
+    // FIXME: Don't rely on the data user has control over (missionName) to create the key for the database entry, this is not safe!
     const fileName = `${missionStore.missionName || 'Cockpit'} (${format(
       streamData.timeRecordingStart!,
       'LLL dd, yyyy - HH꞉mm꞉ss O'
@@ -164,6 +167,7 @@ export const useVideoStore = defineStore('video', () => {
     activeStreams.value[streamName]!.mediaRecorder!.start(1000)
     let chunksCount = 0
     activeStreams.value[streamName]!.mediaRecorder!.ondataavailable = async (e) => {
+      // FIXME: Throw an exception if the entry already exists in the database, otherwise we'll be overwriting other's recorder chunks.
       await tempVideoChunksDB.setItem(`${fileName}_${chunksCount}`, e.data)
       chunksCount++
     }
@@ -186,6 +190,8 @@ export const useVideoStore = defineStore('video', () => {
       // Make sure the chunks are sorted in the order they were created, not the order they are stored
       const sortedChunks = chunks
         .sort((a, b) => {
+          // FIXME: This will always have a risk of failure if the fileName has a field controlled by the user (the missionName).
+          // Create a deterministic way of doing this
           const splitA = a.name.split('_')
           const splitB = b.name.split('_')
           return Number(splitA[splitA.length - 1]) - Number(splitB[splitB.length - 1])
