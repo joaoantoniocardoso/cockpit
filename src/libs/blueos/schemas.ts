@@ -20,9 +20,63 @@ const toKebabCase = (str: string): string => {
  * @param {z.ZodTypeAny} schema The Zod schema to convert
  * @returns {z.ZodTypeAny} The converted Zod schema
  */
-const preprocessCamelCase = <T extends z.ZodTypeAny>(schema: T): z.ZodTypeAny => {
-  return z.preprocess((val: Record<string, unknown>) => camelcaseKeys(val, { deep: true }), schema)
-}
+const preprocessCamelCase = <T extends z.ZodTypeAny>(schema: T): z.ZodTypeAny =>
+  z.preprocess((val: any) => {
+    if (!val || typeof val !== 'object') return val
+
+    // eslint-disable-next-line jsdoc/require-jsdoc
+    function deepCloneJson<V>(v: V): V {
+      return JSON.parse(JSON.stringify(v))
+    }
+
+    // deep-clone to avoid mutating original input (JSON clone is fine for config objects)
+    const clone = deepCloneJson(val)
+
+    // collect paths and values of all headers objects
+    // eslint-disable-next-line jsdoc/require-jsdoc
+    const headerEntries: Array<{ path: (string | number)[]; value: any }> = []
+
+    // eslint-disable-next-line @typescript-eslint/explicit-function-return-type
+    const extract = (obj: any, path: (string | number)[]) => {
+      if (!obj || typeof obj !== 'object') return
+      if (Array.isArray(obj)) {
+        obj.forEach((it, i) => extract(it, path.concat(i)))
+        return
+      }
+      for (const [k, v] of Object.entries(obj)) {
+        if (k === 'headers' && v && typeof v === 'object' && !Array.isArray(v)) {
+          headerEntries.push({ path: path.concat(k), value: v })
+          delete obj[k]
+        } else {
+          extract(v, path.concat(k))
+        }
+      }
+    }
+
+    extract(clone, [])
+
+    // camelcase everything else deeply
+    const camelized = camelcaseKeys(clone, { deep: true })
+
+    // helper to set by path
+    // eslint-disable-next-line @typescript-eslint/explicit-function-return-type
+    const setByPath = (root: any, path: (string | number)[], value: any) => {
+      let cur = root
+      for (let i = 0; i < path.length - 1; i++) {
+        const p = path[i]
+        if (cur[p] === undefined) cur[p] = typeof path[i + 1] === 'number' ? [] : {}
+        cur = cur[p]
+      }
+      cur[path[path.length - 1]] = value
+    }
+
+    // restore headers at same paths
+    for (const { path, value } of headerEntries) {
+      setByPath(camelized, path, value)
+    }
+
+    return camelized
+  }, schema)
 
 // Zod schemas for external API responses
 const ServiceMetadataSchema = z
